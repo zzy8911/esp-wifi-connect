@@ -63,6 +63,8 @@ private:
     static void SmartConfigEventHandler(void* arg, esp_event_base_t event_base, 
                                       int32_t event_id, void* event_data);
     esp_event_handler_instance_t sc_event_instance_ = nullptr;
+
+    std::string qqcar_ble_addr_;
 };
 
 #endif // _WIFI_CONFIGURATION_AP_H_

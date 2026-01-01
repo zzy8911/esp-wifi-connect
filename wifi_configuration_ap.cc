@@ -196,6 +196,18 @@ void WifiConfigurationAp::StartAccessPoint()
 
         nvs_close(nvs);
     }
+
+    err = nvs_open("qqcar", NVS_READONLY, &nvs);
+    if (err == ESP_OK) {
+        char ble_addr[18] = {0};
+        size_t ble_addr_size = sizeof(ble_addr);
+        err = nvs_get_str(nvs, "ble_addr", ble_addr, &ble_addr_size);
+        if (err == ESP_OK) {
+            qqcar_ble_addr_ = ble_addr;
+            ESP_LOGI(TAG, "QQCar BLE address from NVS: %s", qqcar_ble_addr_.c_str());
+        }
+        nvs_close(nvs);
+    }
 }
 
 void WifiConfigurationAp::StartWebServer()
@@ -620,6 +632,100 @@ void WifiConfigurationAp::StartWebServer()
         .user_ctx = this
     };
     ESP_ERROR_CHECK(httpd_register_uri_handler(server_, &advanced_submit));
+
+    httpd_uri_t qqcar_config = {
+        .uri = "/ble/config",
+        .method = HTTP_GET,
+        .handler = [](httpd_req_t *req) -> esp_err_t {
+            auto *this_ = static_cast<WifiConfigurationAp *>(req->user_ctx);
+
+            cJSON *json = cJSON_CreateObject();
+            if (!this_->qqcar_ble_addr_.empty()) {
+                cJSON_AddStringToObject(json, "ble_addr",
+                                        this_->qqcar_ble_addr_.c_str());
+            }
+
+            char *out = cJSON_PrintUnformatted(json);
+            cJSON_Delete(json);
+
+            httpd_resp_set_type(req, "application/json");
+            httpd_resp_set_hdr(req, "Connection", "close");
+            httpd_resp_send(req, out, HTTPD_RESP_USE_STRLEN);
+            free(out);
+            return ESP_OK;
+        },
+        .user_ctx = this
+    };
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server_, &qqcar_config));
+
+    httpd_uri_t qqcar_submit = {
+        .uri = "/ble/submit",
+        .method = HTTP_POST,
+        .handler = [](httpd_req_t *req) -> esp_err_t {
+            size_t buf_len = req->content_len;
+            if (buf_len == 0 || buf_len > 256) {
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
+                return ESP_FAIL;
+            }
+
+            char *buf = (char *)malloc(buf_len + 1);
+            if (!buf) {
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No memory");
+                return ESP_FAIL;
+            }
+
+            int received = 0;
+            while (received < buf_len) {
+                int ret = httpd_req_recv(req, buf + received, buf_len - received);
+                if (ret <= 0) {
+                    free(buf);
+                    if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+                        httpd_resp_send_408(req);
+                    } else {
+                        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to receive body");
+                    }
+                    return ESP_FAIL;
+                }
+                received += ret;
+            }
+            buf[buf_len] = '\0';
+
+            cJSON *json = cJSON_Parse(buf);
+            free(buf);
+
+            if (!json) {
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+                return ESP_FAIL;
+            }
+
+            cJSON *addr = cJSON_GetObjectItem(json, "ble_addr");
+            if (!cJSON_IsString(addr)) {
+                cJSON_Delete(json);
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid BLE addr");
+                return ESP_FAIL;
+            }
+
+            auto *this_ = static_cast<WifiConfigurationAp *>(req->user_ctx);
+            this_->qqcar_ble_addr_ = addr->valuestring;
+
+            // Save to NVS
+            nvs_handle_t nvs;
+            if (nvs_open("qqcar", NVS_READWRITE, &nvs) == ESP_OK) {
+                nvs_set_str(nvs, "ble_addr", this_->qqcar_ble_addr_.c_str());
+                nvs_commit(nvs);
+                nvs_close(nvs);
+            }
+
+            cJSON_Delete(json);
+
+            httpd_resp_set_type(req, "application/json");
+            httpd_resp_set_hdr(req, "Connection", "close");
+            httpd_resp_send(req, "{\"success\":true}", HTTPD_RESP_USE_STRLEN);
+            return ESP_OK;
+        },
+        .user_ctx = this
+    };
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server_, &qqcar_submit));
 
     ESP_LOGI(TAG, "Web server started");
 }

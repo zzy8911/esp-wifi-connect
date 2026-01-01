@@ -136,6 +136,7 @@
     <div class="tabs">
         <div class="tab active" onclick="switchTab('wifi')" data-lang="wifi_tab">WiFi 配置</div>
         <div class="tab" onclick="switchTab('advanced')" data-lang="advanced_tab">高级选项</div>
+        <div class="tab" onclick="switchTab('qqcar')" data-lang="qqcar_tab">QQCar 配置</div>
     </div>
 
     <div id="wifi-tab" class="tab-content active">
@@ -214,6 +215,27 @@
         </form>
     </div>
 
+    <div id="qqcar-tab" class="tab-content">
+        <form onsubmit="submitQQCarForm(event)">
+            <h3>QQCar 蓝牙遥控器配置</h3>
+
+            <p class="error" style="color:red;text-align:center;" id="qqcar_error"></p>
+
+            <p>
+                <label>BLE MAC 地址:</label>
+                <input type="text"
+                       id="ble_addr"
+                       placeholder="97:ff:96:cc:36:7f"
+                       pattern="^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$"
+                       required>
+            </p>
+
+            <p style="text-align:center;">
+                <input type="submit" value="保存并启用">
+            </p>
+        </form>
+    </div>
+
     <script type="text/javascript">
         const button = document.getElementById('button');
         const error = document.getElementById('error');
@@ -230,6 +252,7 @@
                 select_wifi: '从下面列表选择 2.4G Wi-Fi:',
                 wifi_tab: 'Wi-Fi 配置',
                 advanced_tab: '高级选项',
+                qqcar_tab: 'QQCar 配置',
                 ota_url: '自定义 OTA 地址:',
                 max_tx_power: 'Wi-Fi 最大发射功率:',
                 remember_bssid: '连接 Wi-Fi 时记住 BSSID',
@@ -258,6 +281,7 @@
                 select_wifi: 'Select an 2.4G Wi-Fi from the list below:',
                 wifi_tab: 'Wi-Fi Config',
                 advanced_tab: 'Advanced',
+                qqcar_tab: 'QQCar Config',
                 ota_url: 'Custom OTA URL:',
                 max_tx_power: 'Wi-Fi Max TX Power:',
                 remember_bssid: 'Remember BSSID when connecting to Wi-Fi',
@@ -445,6 +469,7 @@
             loadSavedList();
             loadAPList();
             loadAdvancedConfig();
+            loadQQCarConfig();
         });
 
         // 监听 pageshow 事件以处理浏览器返回键
@@ -539,6 +564,44 @@
             } catch (err) {
                 advancedError.textContent = err.message;
                 advancedButton.disabled = false;
+            }
+        }
+
+        async function submitQQCarForm(e) {
+            e.preventDefault();
+            const err = document.getElementById('qqcar_error');
+            err.textContent = '';
+
+            const addr = document.getElementById('ble_addr').value;
+
+            try {
+                const resp = await fetch('/ble/submit', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ble_addr: addr })
+                });
+                const data = await resp.json();
+                if (!data.success) throw new Error(data.error || '配置失败');
+                showToast('BLE 控制器配置成功');
+            } catch (e) {
+                err.textContent = e.message;
+            }
+        }
+
+        // 加载 QQCar BLE 配置 (从 NVS 读取)
+        async function loadQQCarConfig() {
+            try {
+                const response = await fetch('/ble/config');
+                if (response.ok) {
+                    const data = await response.json();
+                    // 如果后端返回了 ble_addr，则填充到输入框
+                    if (data.ble_addr) {
+                        document.getElementById('ble_addr').value = data.ble_addr;
+                        console.log('BLE 地址加载成功:', data.ble_addr);
+                    }
+                }
+            } catch (error) {
+                console.error('加载 QQCar 配置失败:', error);
             }
         }
 

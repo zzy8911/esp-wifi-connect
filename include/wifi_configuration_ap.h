@@ -21,8 +21,8 @@ public:
     void Start();
     void Stop();
     void StartSmartConfig();
-    bool ConnectToWifi(const std::string &ssid, const std::string &password);
-    void Save(const std::string &ssid, const std::string &password);
+    bool ConnectToWifi(const std::string &ssid, const std::string &password, uint8_t *bssid_out=nullptr, uint8_t *channel_out=nullptr);
+    void Save(const std::string &ssid, const std::string &password, uint8_t *bssid=nullptr, uint8_t *channel=nullptr);
 
     std::string GetSsid();
     std::string GetWebServerUrl();

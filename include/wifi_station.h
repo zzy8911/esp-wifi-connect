@@ -55,11 +55,13 @@ private:
     std::function<void(const std::string& ssid)> on_connected_;
     std::function<void()> on_scan_begin_;
     std::vector<WifiApRecord> connect_queue_;
+    int fast_connect_index_ = 0;
 
     void HandleScanResult();
     void StartConnect();
     static void WifiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
     static void IpEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+    void TryOneFastConnect();
 };
 
 #endif // _WIFI_STATION_H_

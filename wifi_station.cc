@@ -40,6 +40,8 @@ WifiStation::WifiStation() {
         remember_bssid_ = 0;
     }
     nvs_close(nvs);
+
+    fast_connect_index_ = 0;
 }
 
 WifiStation::~WifiStation() {
@@ -223,19 +225,51 @@ void WifiStation::SetPowerSaveMode(bool enabled) {
     ESP_ERROR_CHECK(esp_wifi_set_ps(enabled ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE));
 }
 
+void WifiStation::TryOneFastConnect() {
+    auto& ssid_list = SsidManager::GetInstance().GetSsidList();
+    if (fast_connect_index_ >= ssid_list.size()) {
+        ESP_LOGI(TAG, "All saved SSID have already been tried.");
+        return;
+    }
+
+    const auto& item = ssid_list[fast_connect_index_];
+    wifi_config_t wifi_config;
+    bzero(&wifi_config, sizeof(wifi_config));
+    strcpy((char*)wifi_config.sta.ssid, item.ssid.c_str());
+    strcpy((char*)wifi_config.sta.password, item.password.c_str());
+    wifi_config.sta.channel = item.channel;
+    memcpy(wifi_config.sta.bssid, item.bssid, 6);
+    wifi_config.sta.bssid_set = true;
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_connect());
+    ESP_LOGI(TAG, "Try fast connect #%d: %s", fast_connect_index_, item.ssid.c_str());
+    fast_connect_index_++;
+}
+
 // Static event handler functions
 void WifiStation::WifiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     auto* this_ = static_cast<WifiStation*>(arg);
     if (event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_scan_start(nullptr, false);
-        if (this_->on_scan_begin_) {
-            this_->on_scan_begin_();
-        }
+        this_->TryOneFastConnect();
     } else if (event_id == WIFI_EVENT_SCAN_DONE) {
         this_->HandleScanResult();
     } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        auto* event = static_cast<wifi_event_sta_disconnected_t*>(event_data);
+        ESP_LOGI(TAG, "Disconnected. Reason: %d", event->reason);
         xEventGroupClearBits(this_->event_group_, WIFI_EVENT_CONNECTED);
-        if (this_->reconnect_count_ < MAX_RECONNECT_COUNT) {
+        if (this_->fast_connect_index_ < SsidManager::GetInstance().GetSsidList().size()) {
+            this_->TryOneFastConnect();
+            return;
+        } else if (this_->fast_connect_index_ == SsidManager::GetInstance().GetSsidList().size()) {
+            ESP_LOGI(TAG, "Fast connect attempts failed, start scanning.");
+            // All fast connect attempts done, start normal scan
+            this_->fast_connect_index_++;
+            esp_wifi_scan_start(nullptr, false);
+            if (this_->on_scan_begin_) {
+                this_->on_scan_begin_();
+            }
+            return;
+        } else if (this_->reconnect_count_ < MAX_RECONNECT_COUNT) {
             esp_wifi_connect();
             this_->reconnect_count_++;
             ESP_LOGI(TAG, "Reconnecting %s (attempt %d / %d)", this_->ssid_.c_str(), this_->reconnect_count_, MAX_RECONNECT_COUNT);

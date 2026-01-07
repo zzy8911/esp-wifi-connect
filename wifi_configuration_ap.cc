@@ -378,19 +378,21 @@ void WifiConfigurationAp::StartWebServer()
 
             std::string ssid_str = ssid_item->valuestring;
             std::string password_str = "";
+            uint8_t bssid[6];
+            uint8_t channel = 0;
             if (cJSON_IsString(password_item) && (password_item->valuestring != NULL)) {
                 password_str = password_item->valuestring;
             }
 
             // 获取当前对象
             auto *this_ = static_cast<WifiConfigurationAp *>(req->user_ctx);
-            if (!this_->ConnectToWifi(ssid_str, password_str)) {
+            if (!this_->ConnectToWifi(ssid_str, password_str, bssid, &channel)) {
                 cJSON_Delete(json);
                 httpd_resp_send(req, "{\"success\":false,\"error\":\"无法连接到 WiFi\"}", HTTPD_RESP_USE_STRLEN);
                 return ESP_OK;
             }
 
-            this_->Save(ssid_str, password_str);
+            this_->Save(ssid_str, password_str, bssid, &channel);
             cJSON_Delete(json);
             // 设置成功响应
             httpd_resp_set_type(req, "application/json");
@@ -730,7 +732,10 @@ void WifiConfigurationAp::StartWebServer()
     ESP_LOGI(TAG, "Web server started");
 }
 
-bool WifiConfigurationAp::ConnectToWifi(const std::string &ssid, const std::string &password)
+bool WifiConfigurationAp::ConnectToWifi(const std::string &ssid,
+                                        const std::string &password,
+                                        uint8_t *bssid_out,
+                                        uint8_t *channel_out)
 {
     if (ssid.empty()) {
         ESP_LOGE(TAG, "SSID cannot be empty");
@@ -768,6 +773,21 @@ bool WifiConfigurationAp::ConnectToWifi(const std::string &ssid, const std::stri
 
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "Connected to WiFi %s", ssid.c_str());
+
+        // 获取 AP 信息
+        wifi_ap_record_t ap_info;
+        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+            ESP_LOGI(TAG, "AP BSSID: %02x:%02x:%02x:%02x:%02x:%02x",
+                     ap_info.bssid[0], ap_info.bssid[1], ap_info.bssid[2],
+                     ap_info.bssid[3], ap_info.bssid[4], ap_info.bssid[5]);
+            ESP_LOGI(TAG, "AP Channel: %d", ap_info.primary);
+
+            if (bssid_out != nullptr) memcpy(bssid_out, ap_info.bssid, 6);
+            if (channel_out != nullptr) *channel_out = ap_info.primary;
+        } else {
+            ESP_LOGW(TAG, "Failed to get AP info");
+        }
+
         esp_wifi_disconnect();
         return true;
     } else {
@@ -776,10 +796,13 @@ bool WifiConfigurationAp::ConnectToWifi(const std::string &ssid, const std::stri
     }
 }
 
-void WifiConfigurationAp::Save(const std::string &ssid, const std::string &password)
+void WifiConfigurationAp::Save(const std::string &ssid,
+                               const std::string &password,
+                               uint8_t *bssid,
+                               uint8_t *channel)
 {
     ESP_LOGI(TAG, "Save SSID %s %d", ssid.c_str(), ssid.length());
-    SsidManager::GetInstance().AddSsid(ssid, password);
+    SsidManager::GetInstance().AddSsid(ssid, password, bssid, channel);
 }
 
 void WifiConfigurationAp::WifiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
